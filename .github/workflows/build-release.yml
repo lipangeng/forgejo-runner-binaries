@@ -1,0 +1,182 @@
+name: Build and release Forgejo Runner binaries
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Upstream Forgejo Runner tag to build, e.g. v12.0.3"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-release-${{ github.ref_name || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Determine tag
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          if [ -z "${TAG}" ]; then
+            echo "Tag is empty"
+            exit 1
+          fi
+
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Building tag: ${TAG}"
+
+      - name: Checkout current repository
+        uses: actions/checkout@v6
+
+      - name: Check whether release already exists
+        id: release_check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${{ steps.meta.outputs.tag }}"
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release ${TAG} already exists, skip."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Release ${TAG} does not exist yet."
+          fi
+
+      - name: Clone upstream source
+        if: steps.release_check.outputs.exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${{ steps.meta.outputs.tag }}"
+
+          git clone https://code.forgejo.org/forgejo/runner.git upstream
+          cd upstream
+          git checkout "${TAG}"
+
+      - name: Set up Go
+        if: steps.release_check.outputs.exists == 'false'
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: upstream/go.mod
+          cache-dependency-path: upstream/go.sum
+
+      - name: Build binaries
+        if: steps.release_check.outputs.exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          cd upstream
+
+          build() {
+            local goos="$1"
+            local goarch="$2"
+            local ext="$3"
+            local output="../dist/forgejo-runner-${goos}-${goarch}${ext}"
+
+            echo "==> building ${goos}/${goarch}"
+
+            CGO_ENABLED=0 \
+            GOOS="${goos}" \
+            GOARCH="${goarch}" \
+            go build -v \
+              -tags 'netgo osusergo' \
+              -ldflags '-s -w' \
+              -o "${output}"
+          }
+
+          build linux amd64 ""
+          build linux arm64 ""
+          build darwin amd64 ""
+          build darwin arm64 ""
+          build windows amd64 ".exe"
+          build windows arm64 ".exe"
+
+      - name: Generate per-file checksums
+        if: steps.release_check.outputs.exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd dist
+
+          for file in *; do
+            if [ -f "$file" ]; then
+              sha256sum "$file" | awk '{print $1}' > "${file}.sha256"
+            fi
+          done
+
+          ls -lh
+
+      - name: Write release notes
+        if: steps.release_check.outputs.exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${{ steps.meta.outputs.tag }}"
+
+          cat > release-notes.md <<EOF
+          Unofficial prebuilt binaries for Forgejo Runner ${TAG}.
+
+          Upstream source:
+          https://code.forgejo.org/forgejo/runner
+
+          Built from upstream tag:
+          ${TAG}
+
+          Included artifacts:
+          - forgejo-runner-linux-amd64
+          - forgejo-runner-linux-arm64
+          - forgejo-runner-windows-amd64.exe
+          - forgejo-runner-windows-arm64.exe
+          - forgejo-runner-darwin-amd64
+          - forgejo-runner-darwin-arm64
+          - checksums.txt
+
+          Notes:
+          - Built with CGO_ENABLED=0
+          - Build tags: netgo osusergo
+          - ldflags: -s -w
+          - Unofficial build, not affiliated with the Forgejo project
+          EOF
+
+      - name: Create GitHub release
+        if: steps.release_check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${{ steps.meta.outputs.tag }}"
+
+          gh release create "${TAG}" dist/* \
+            --title "Forgejo Runner ${TAG}" \
+            --notes-file release-notes.md
+
+          echo "Release ${TAG} created successfully."
