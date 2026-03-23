@@ -5,11 +5,6 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      tag:
-        description: "Upstream Forgejo Runner tag to build, e.g. v12.0.3"
-        required: true
-        type: string
 
 permissions:
   contents: write
