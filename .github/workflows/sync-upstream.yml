@@ -63,20 +63,35 @@ jobs:
             echo "Tag ${TAG} does not exist in current repository."
           fi
 
-      - name: Create and push tag
-        if: steps.local_tag.outputs.exists == 'false'
+      - name: Check whether release already exists
+        id: release_check
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
 
           TAG="${{ steps.upstream.outputs.latest_tag }}"
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release ${TAG} already exists."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Release ${TAG} does not exist yet."
+          fi
 
-          CURRENT_SHA="$(git rev-parse HEAD)"
+      - name: Trigger build workflow
+        if: steps.release_check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
 
-          git tag "${TAG}" "${CURRENT_SHA}"
-          git push origin "${TAG}"
+          TAG="${{ steps.upstream.outputs.latest_tag }}"
 
-          echo "Pushed tag ${TAG} to current repository."
+          gh workflow run build-release.yml \
+            -f tag="${TAG}"
+
+          echo "Triggered build-release.yml for tag ${TAG}"
