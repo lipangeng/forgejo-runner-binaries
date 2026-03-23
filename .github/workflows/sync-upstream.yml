@@ -1,0 +1,82 @@
+name: Sync upstream Forgejo Runner tag
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/30 * * * *"
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: sync-upstream-forgejo-runner
+  cancel-in-progress: false
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout current repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          
+      - name: Get latest upstream tag
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          UPSTREAM_REPO="https://code.forgejo.org/forgejo/runner.git"
+
+          LATEST_TAG="$(
+            git ls-remote --tags --refs "${UPSTREAM_REPO}" \
+              | awk '{print $2}' \
+              | sed 's#refs/tags/##' \
+              | sort -V \
+              | tail -n 1
+          )"
+
+          if [ -z "${LATEST_TAG}" ]; then
+            echo "Failed to detect latest upstream tag"
+            exit 1
+          fi
+
+          echo "latest_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Latest upstream tag: ${LATEST_TAG}"
+
+      - name: Check whether tag already exists locally
+        id: local_tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${{ steps.upstream.outputs.latest_tag }}"
+
+          if git rev-parse "${TAG}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} already exists in current repository."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Tag ${TAG} does not exist in current repository."
+          fi
+
+      - name: Create and push tag
+        if: steps.local_tag.outputs.exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${{ steps.upstream.outputs.latest_tag }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          CURRENT_SHA="$(git rev-parse HEAD)"
+
+          git tag "${TAG}" "${CURRENT_SHA}"
+          git push origin "${TAG}"
+
+          echo "Pushed tag ${TAG} to current repository."
