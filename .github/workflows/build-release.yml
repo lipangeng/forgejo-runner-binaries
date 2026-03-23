@@ -1,10 +1,12 @@
 name: Build and release Forgejo Runner binaries
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Upstream Forgejo Runner tag to build, e.g. v12.0.3"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -24,7 +26,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${{ inputs.tag }}"
 
           if [ -z "${TAG}" ]; then
             echo "Tag is empty"
