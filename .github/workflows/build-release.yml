@@ -91,6 +91,7 @@ jobs:
             local ext="$3"
             local output="../dist/forgejo-runner-${goos}-${goarch}${ext}"
 
+            echo "::group::Build ${file}"
             echo "==> building ${goos}/${goarch}"
 
             CGO_ENABLED=0 \
@@ -100,6 +101,7 @@ jobs:
               -tags 'netgo osusergo' \
               -ldflags '-s -w' \
               -o "${output}"
+            echo "::endgroup::"
           }
 
           build linux amd64 ""
