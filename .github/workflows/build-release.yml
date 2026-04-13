@@ -91,7 +91,7 @@ jobs:
             local ext="$3"
             local output="../dist/forgejo-runner-${goos}-${goarch}${ext}"
 
-            echo "::group::Build ${file}"
+            echo "::group::Build ${output}"
             echo "==> building ${goos}/${goarch}"
 
             CGO_ENABLED=0 \
